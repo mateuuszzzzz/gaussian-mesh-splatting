@@ -1,4 +1,4 @@
-name: gaussian_splatting_mesh
+name: gs_mesh_debug2
 channels:
   - pytorch
   - conda-forge
@@ -16,6 +16,13 @@ dependencies:
   - tqdm
   - pip:
     - chumpy==0.70
+    - cupy-cuda11x==11.6.0
+    - git+https://github.com/szagoruyko/pyinn.git@master
+    - pandas==0.25.3
+    - matplotlib==3.1.2
+    - h5py==2.10.0
+    - scikit-learn==0.22.1
     - smplx==0.1.28
     - submodules/diff-gaussian-rasterization
     - submodules/simple-knn
+    - submodules/hypercloud

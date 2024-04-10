@@ -1,3 +1,12 @@
+## Temporary installation
+
+1. Clone repository recursively
+2. Switch hypercloud submodule to branch named `submodule_branch`
+3. Create conda env from environment.yml file
+4. Manually install pyinn with `pip install git+https://github.com/szagoruyko/pyinn.git@master --no-deps`.
+
+
+
 # GaMeS
 Joanna Waczyńska*, Piotr Borycki*, Sławomir Tadeja, Jacek Tabor, Przemysław Spurek
 (* indicates equal contribution)<br>
