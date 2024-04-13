@@ -1,13 +1,3 @@
-## Temporary installation
-
-1. Clone repository recursively
-2. Switch hypercloud submodule to branch named `submodule_branch`
-3. Create conda env from environment.yml file
-4. Manually install pyinn with `pip install git+https://github.com/szagoruyko/pyinn.git@master --no-deps`.
-5. There is a problem with installing `pyinn`. Probably you will see an error that `cupy` has no attribute `util`. You have to change `util` to `_util` in this file.
-
-
-
 # GaMeS
 Joanna Waczyńska*, Piotr Borycki*, Sławomir Tadeja, Jacek Tabor, Przemysław Spurek
 (* indicates equal contribution)<br>
