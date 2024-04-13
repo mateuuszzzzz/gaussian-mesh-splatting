@@ -35,6 +35,8 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
+from hypercloud_splatting import hypercloud_training
+
 
 def training(gs_type, dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint,
              debug_from, save_xyz):
@@ -260,12 +262,17 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     # network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(
-        args.gs_type,
-        lp.extract(args), op.extract(args), pp.extract(args),
-        args.test_iterations, args.save_iterations, args.checkpoint_iterations,
-        args.start_checkpoint, args.debug_from, args.save_xyz
-    )
+
+    # delegate hypercloud splatting to dedicated training loop
+    if args.gs_type == 'gs_hypercloud':
+        hypercloud_training(args)
+    else:
+        training(
+            args.gs_type,
+            lp.extract(args), op.extract(args), pp.extract(args),
+            args.test_iterations, args.save_iterations, args.checkpoint_iterations,
+            args.start_checkpoint, args.debug_from, args.save_xyz
+        )
 
     # All done
     print("\nTraining complete.")
