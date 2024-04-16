@@ -29,7 +29,8 @@ optimizationParamTypeCallbacks = {
     "gs_multi_mesh": OptimizationParamsMesh,
     "gs_flat": OptimizationParams,
     "gs_mesh": OptimizationParamsMesh,
-    "gs_flame": OptimizationParamsFlame
+    "gs_flame": OptimizationParamsFlame,
+    "gs_hypercloud": None,
 }
 
 gaussianModel = {
@@ -38,7 +39,8 @@ gaussianModel = {
     "gs_mesh": GaussianMeshModel,
     "gs_multi_mesh": GaussianMultiMeshModel,
     "gs_flame": GaussianFlameModel,
-    "gs_points": PointsGaussianModel
+    "gs_points": PointsGaussianModel,
+    "gs_hypercloud": None,
 }
 
 gaussianModelRender = {
@@ -47,5 +49,6 @@ gaussianModelRender = {
     "gs_mesh": GaussianMeshModel,
     "gs_multi_mesh": GaussianMultiMeshModel,
     "gs_flame": GaussianFlameModel,
-    "gs_points": PointsGaussianModel
+    "gs_points": PointsGaussianModel,
+    "gs_hypercloud": None,
 }

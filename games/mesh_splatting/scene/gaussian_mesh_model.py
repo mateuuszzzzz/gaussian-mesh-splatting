@@ -19,7 +19,7 @@ from torch import nn
 from scene.gaussian_model import GaussianModel
 from utils.general_utils import inverse_sigmoid, rot_to_quat_batch
 from utils.sh_utils import RGB2SH
-from games.mesh_splatting.utils.graphics_utils import MeshPointCloud
+from games.mesh_splatting.utils.graphics_utils import MeshPointCloud, DifferentiableMeshPointCloud
 
 
 class GaussianMeshModel(GaussianModel):
@@ -45,7 +45,7 @@ class GaussianMeshModel(GaussianModel):
     def get_xyz(self):
         return self._xyz
 
-    def create_from_pcd(self, pcd: MeshPointCloud, spatial_lr_scale: float):
+    def create_from_pcd(self, pcd: DifferentiableMeshPointCloud, spatial_lr_scale: float):
 
         self.point_cloud = pcd
         self.triangles = self.point_cloud.triangles
@@ -61,25 +61,24 @@ class GaussianMeshModel(GaussianModel):
         print("Number of points at initialisation : ",
               alpha_point_cloud.shape[0] * alpha_point_cloud.shape[1])
 
-        fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
+        fused_color = RGB2SH(pcd.colors.cuda()) # CREATE CUSTOM GS MODEL
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
         features[:, :3, 0] = fused_color
         features[:, 3:, 1:] = 0.0
 
-        opacities = inverse_sigmoid(0.1 * torch.ones((pcd.points.shape[0], 1), dtype=torch.float, device="cuda"))
+        # opacities = inverse_sigmoid(0.1 * torch.ones((pcd.points.shape[0], 1), dtype=torch.float, device="cuda"))
+        opacities = pcd.opacities.cuda()
 
-        self.vertices = nn.Parameter(
-            self.point_cloud.vertices.clone().detach().requires_grad_(True).cuda().float()
-        )
-        self.faces = torch.tensor(self.point_cloud.faces).cuda()
+        self.vertices = self.point_cloud.vertices.cuda().float()
+        self.faces = self.point_cloud.faces.cuda()
 
-        self._alpha = nn.Parameter(alpha_point_cloud.requires_grad_(True))  # check update_alpha
+        self._alpha = alpha_point_cloud
         self.update_alpha()
-        self._features_dc = nn.Parameter(features[:, :, 0:1].transpose(1, 2).contiguous().requires_grad_(True))
-        self._features_rest = nn.Parameter(features[:, :, 1:].transpose(1, 2).contiguous().requires_grad_(True))
-        self._scale = nn.Parameter(scale.requires_grad_(True))
+        self._features_dc = features[:, :, 0:1].transpose(1, 2)
+        self._features_rest = features[:, :, 1:].transpose(1, 2)
+        self._scale = scale
         self.prepare_scaling_rot()
-        self._opacity = nn.Parameter(opacities.requires_grad_(True))
+        self._opacity = opacities
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def _calc_xyz(self):

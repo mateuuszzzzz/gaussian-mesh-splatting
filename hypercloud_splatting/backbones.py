@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 TARGET_INPUT_SIZE = 3*3
-TARGET_OUTPUT_SIZE = lambda config: sum([channels for _, channels in config['model']['GS_TN']['gs_params_out_channels']], 0) 
+TARGET_OUTPUT_SIZE = lambda config: sum([channels for _, channels in config['model']['GS_TN']['gs_params_out_channels'].items()], 0) 
 
 class Face2GSParamsTargetNetwork(nn.Module):
     def __init__(self, config, weights):

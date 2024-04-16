@@ -84,6 +84,12 @@ def readNerfSyntheticMeshInfo(
 
         shs = np.random.random((num_pts, 3)) / 255.0
 
+        print({
+            "alpha_type": type(alpha),
+            "alpha_shape": alpha.shape,
+            "colors_type": type(colors) 
+        })
+
         pcd = MeshPointCloud(
             alpha=alpha,
             points=xyz,

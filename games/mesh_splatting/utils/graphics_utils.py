@@ -16,6 +16,17 @@ import torch
 from typing import NamedTuple
 
 
+class DifferentiableMeshPointCloud(NamedTuple):
+    alpha: torch.Tensor
+    points: torch.Tensor
+    colors: torch.Tensor
+    opacities: torch.Tensor
+    normals: np.array
+    vertices: np.array
+    faces: np.array
+    transform_vertices_function: object
+    triangles: torch.Tensor
+
 class MeshPointCloud(NamedTuple):
     alpha: torch.Tensor
     points: torch.Tensor

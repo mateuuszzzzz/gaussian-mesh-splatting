@@ -46,19 +46,19 @@ class ParamGroup:
 
 class ModelParams(ParamGroup): 
     def __init__(self, parser, sentinel=False):
-        self.sh_degree = 3
+        self.sh_degree = 0
         self._source_path = ""
         self._model_path = ""
         self._images = "images"
         self._resolution = -1
-        self._white_background = False
+        self._white_background = True
         self.data_device = "cuda"
         self.eval = False
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
         g = super().extract(args)
-        g.source_path = os.path.abspath(g.source_path)
+        g.source_path = "Unknown"
         return g
 
 class PipelineParams(ParamGroup):
