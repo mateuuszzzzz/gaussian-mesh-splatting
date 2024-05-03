@@ -15,7 +15,7 @@
 
     "seed": 2018,
     "z_size": 2048,
-    "batch_size": 2,
+    "batch_size": 1,
 
     "metrics": {
         "distribution": "normal",
@@ -100,7 +100,7 @@
             "execute": true,
             "amount": 10,
             "method": "edge",
-            "depth": 2,
+            "depth": 4,
             "start": 0.5,
             "end": 1.5,
             "transitions": 21
@@ -130,6 +130,26 @@
                 "execute": true,
                 "method": "edge",
                 "depth": 2
+            }
+        }
+    },
+    "optimizer": {
+        "D": {
+            "type": "Adam",
+            "hyperparams": {
+                "lr": 0.0001,
+                "weight_decay": 0,
+                "betas": [0.9, 0.999],
+                "amsgrad": false
+            }
+        },
+        "E_HN": {
+            "type": "Adam",
+            "hyperparams": {
+                "lr": 0.0001,
+                "weight_decay": 0,
+                "betas": [0.9, 0.999],
+                "amsgrad": false
             }
         }
     }

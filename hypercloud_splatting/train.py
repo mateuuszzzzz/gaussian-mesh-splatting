@@ -19,6 +19,8 @@ from utils.loss_utils import l1_loss, ssim
 from renderer.gaussian_renderer import render
 from utils.camera_utils import cameraList_from_camInfos
 import random
+from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 ENCODER_WEIGHTS = lambda path, epoch: torch.load(join(path, f'{epoch:05}_E.pth'))
 SPHERE2MODEL_DECODER_WEIGHTS = lambda path, epoch: torch.load(join(path, f'{epoch:05}_G.pth'))
@@ -29,6 +31,68 @@ MESH_DEPTH = lambda config: config['experiments']['sphere_triangles']['depth']
 EPS = 1e-8
 
 LAMBDA_DSSIM = 0.2
+
+
+def save_training_data(
+        gt_image, 
+        image, 
+        seed,
+        vertices,
+        faces,
+        point_cloud,
+):
+
+
+    gt_image = gt_image.clone().cpu().detach().permute(1,2,0).numpy()
+    image = image.clone().cpu().detach().permute(1,2,0).numpy()
+    fig, axs = plt.subplots(1,2, figsize=(10,5))
+
+    vertices = vertices.clone().cpu().detach()
+    if vertices.shape[0] == 3:
+        vertices = vertices.transpose(0,1)
+    vertices = vertices.numpy()
+
+    faces = faces.clone().cpu().detach().numpy()
+
+
+    point_cloud = point_cloud.clone().cpu().detach().transpose(0,1).numpy()
+
+
+    # RENDERS
+    axs[0].set_title("Ground truth")
+    axs[0].imshow(gt_image)
+
+    axs[1].set_title("Ours")
+    axs[1].imshow(image)
+
+    plt.savefig(f'./debug_data/image_{seed}.png', dpi=300)
+    plt.close(fig)
+
+    # MESHES
+    fig = plt.figure(figsize=(20,5))
+    ax1 = fig.add_subplot(1, 3, 1, projection='3d')
+    ax2 = fig.add_subplot(1, 3, 2, projection='3d')
+    ax3 = fig.add_subplot(1, 3, 3, projection='3d')
+
+    ax1.set_title('HyperCloud mesh')
+    ax2.set_title('GS mesh')
+    ax3.set_title('Initial point cloud')
+
+    ax1.plot_trisurf(
+        vertices[:, 0],
+        vertices[:, 1],
+        vertices[:, 2],
+        triangles=faces,
+        cmap='viridis',
+        alpha=0.4,
+        edgecolor='black'
+    )
+
+
+    ax3.scatter3D(point_cloud[:,0], point_cloud[:, 1], point_cloud[:, 2], c='r')
+
+    plt.savefig(f'./debug_data/mesh_{seed}.png', dpi=300)
+    plt.close(fig)
 
 def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, vertices, faces):
     alpha = torch.relu(raw_alpha) + EPS
@@ -50,7 +114,7 @@ def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, vertices, faces):
         vertices *= c
         return vertices
     
-    triangles = vertices[torch.tensor(faces).long()].float().cuda()
+    triangles = vertices[faces.clone().detach().long()].float().cuda()
 
     num_pts = triangles.shape[0]
 
@@ -71,7 +135,7 @@ def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, vertices, faces):
         transform_vertices_function=transform_vertices_function,
         triangles=triangles.cuda(),
         opacities=opacity
-    )
+    ), c.clone().cpu().detach().numpy()
 
 # NOTE: Possibly in future it will need something to handle white/back background. Now it handles only white.
 def gatherCamInfos(cam_poses, images):
@@ -141,6 +205,7 @@ def hypercloud_training(config, args, pipe):
 
     # LOAD GS MESH PARAMS DECODER
     face2params_decoder = Face2GSParamsDecoder(config, device).to(device)
+    face2params_decoder.train()
 
     # LOAD DATASET
     dataset_name = config['dataset'].lower()
@@ -167,78 +232,99 @@ def hypercloud_training(config, args, pipe):
     for epoch in range(1000):
         face2params_decoder.train()
 
-        for i, (point_cloud, images, cam_poses) in enumerate(dataloader):
 
-            # Move to the device
-            point_cloud = point_cloud.to(device).float()
+        print(50*"#" + f"Epoch {epoch}" + 50*"#")
+        try:
+            for i, (point_cloud, images, cam_poses) in enumerate(tqdm(dataloader)):
+                x = []
+                y = []
 
-            # Change dim [BATCH, N_POINTS, N_DIM] -> [BATCH, N_DIM, N_POINTS]
-            if point_cloud.size(-1) == 3:
-                point_cloud.transpose_(point_cloud.dim() - 2, point_cloud.dim() - 1)
+                # Move to the device
+                point_cloud = point_cloud.to(device).float()
 
-
-            # Compute latent parameters
-            codes, mu, logvar = encoder(point_cloud)
-            # Compute weights for target network that generates mesh from sphere
-            sphere2model_weights = sphere2model_decoder(codes) # NON-TRAINABLE
-
-            # Compute weights for target network that generates gaussian mesh splatting params
-            face2params_weights = face2params_decoder(codes)
-
-            for j in range(batch_size):
-                # Init mesh target network with returned weights
-                sphere2model_target_network = Sphere2ModelTargetNetwork(config, sphere2model_weights[j].to(device)).to(device)
-
-                # Transform mesh of the sphere
-                transformed_vertices = sphere2model_target_network(sphere_vertices)
-
-                # Init gaussian params target network
-                face2params_target_network = Face2GSParamsTargetNetwork(config, face2params_weights[j].to(device)).to(device)
+                # Change dim [BATCH, N_POINTS, N_DIM] -> [BATCH, N_DIM, N_POINTS]
+                if point_cloud.size(-1) == 3:
+                    point_cloud.transpose_(point_cloud.dim() - 2, point_cloud.dim() - 1)
 
 
-                # For each face we need to compute GS params vector. [N_FACES, 9] -> [N_FACES, N_PARAMS]
-                transformed_faces = transformed_vertices[sphere_faces]
-                transformed_faces = transformed_faces.reshape(transformed_faces.shape[0], -1).to(device)
+                # Compute latent parameters
+                codes, mu, logvar = encoder(point_cloud)
+                # Compute weights for target network that generates mesh from sphere
+                sphere2model_weights = sphere2model_decoder(codes) # NON-TRAINABLE
 
-                gs_params = face2params_target_network(transformed_faces)
+                # Compute weights for target network that generates gaussian mesh splatting params
+                face2params_weights = face2params_decoder(codes)
 
-                # We have 7 params in total
-                # 1. First group of 3 are alphas
-                # 2. Second group of 3 is RGB
-                # 3. Next value is scaling parameter (it scales mesh size)
-                # 4. Last value is opacity
-                raw_alphas, raw_rgb, raw_c, raw_opacity = torch.split(gs_params, [3, 3, 1, 1], dim=-1)
+                for j in range(batch_size):
+                    # Init mesh target network with returned weights
+                    sphere2model_target_network = Sphere2ModelTargetNetwork(config, sphere2model_weights[j].to(device)).to(device)
 
-                pcd = prepare_pcd(raw_alphas, raw_rgb, raw_c, raw_opacity, transformed_vertices, sphere_faces)
-                cam_infos, radius = get_cameras_extent_radius(cam_poses[j], images[j])
+                    # Transform mesh of the sphere
+                    transformed_vertices = sphere2model_target_network(sphere_vertices)
+
+                    # Init gaussian params target network
+                    face2params_target_network = Face2GSParamsTargetNetwork(config, face2params_weights[j].to(device)).to(device)
+
+
+                    # For each face we need to compute GS params vector. [N_FACES, 9] -> [N_FACES, N_PARAMS]
+                    transformed_faces = transformed_vertices[sphere_faces]
+                    transformed_faces = transformed_faces.reshape(transformed_faces.shape[0], -1).to(device)
+
+                    gs_params = face2params_target_network(transformed_faces)
+
+                    # We have 7 params in total
+                    # 1. First group of 3 are alphas
+                    # 2. Second group of 3 is RGB
+                    # 3. Next value is scaling parameter (it scales mesh size)
+                    # 4. Last value is opacity
+                    raw_alphas, raw_rgb, raw_c, raw_opacity = torch.split(gs_params, [3, 3, 1, 1], dim=-1)
+
+                    pcd, scaling = prepare_pcd(raw_alphas, raw_rgb, raw_c, raw_opacity, transformed_vertices, sphere_faces)
+                    cam_infos, radius = get_cameras_extent_radius(cam_poses[j], images[j])
+                    
+                    # Build gaussian model from created pcd
+                    gaussian_model.create_from_pcd(pcd, radius)
+
+
+                    # PREPARE CAM_INFOS
+                    cam_infos, radius = get_cameras_extent_radius(cam_poses[j], images[j])
+                    cameraList = cameraList_from_camInfos(cam_infos, resolution_scale=1.0, args=args)
+                    random.shuffle(cameraList)
+                    
+                    # PREPARE RENDERING
+                    bg = torch.tensor([1,1,1], dtype=torch.float32, device="cuda")
+
+                    for idx, viewpoint_cam in enumerate(cameraList):
+                        render_pkg = render(viewpoint_cam, gaussian_model, pipe, bg)
+                        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], \
+                        render_pkg["visibility_filter"], render_pkg["radii"]
+                        gt_image = viewpoint_cam.original_image.cuda()
+
+                        try:
+                            if idx % 25 == 0:
+                                save_training_data(
+                                    gt_image,
+                                    image,
+                                    f'(debug)',
+                                    transformed_vertices,
+                                    sphere_faces,
+                                    point_cloud[j],
+                                )
+                        except Exception as e:
+                            print(e)
+
+                        x.append(gt_image)
+                        y.append(image)
                 
-                # Build gaussian model from created pcd
-                gaussian_model.create_from_pcd(pcd, radius)
+                # HERE WE SHOULD DO BACKWARD PASS
+                optimizer.zero_grad()
+                x = torch.stack(x)
+                y = torch.stack(y)
 
+                Ll1 = l1_loss(y, x)
+                loss = (1.0 - LAMBDA_DSSIM) * Ll1 + LAMBDA_DSSIM * (1.0 - ssim(y, x))
 
-                # PREPARE CAM_INFOS
-                cam_infos, radius = get_cameras_extent_radius(cam_poses[j], images[j])
-                cameraList = cameraList_from_camInfos(cam_infos, resolution_scale=1.0, args=args)
-                random.shuffle(cameraList)
-                
-                # PREPARE RENDERING
-                bg = torch.tensor([1,1,1], dtype=torch.float32, device="cuda")
-
-
-                for viewpoint_cam in cameraList:
-                    optimizer.zero_grad()
-
-                    render_pkg = render(viewpoint_cam, gaussian_model, pipe, bg)
-                    image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], \
-                    render_pkg["visibility_filter"], render_pkg["radii"]
-
-
-
-                    gt_image = viewpoint_cam.original_image.cuda()
-                    Ll1 = l1_loss(image, gt_image)
-                    loss = (1.0 - LAMBDA_DSSIM) * Ll1 + LAMBDA_DSSIM * (1.0 - ssim(image, gt_image))
-                    print(f"LOSS: {loss}")
-
-                    loss.backward()
-
-                    optimizer.step()
+                loss.backward()
+                optimizer.step()
+        except Exception as e:
+            print(e)

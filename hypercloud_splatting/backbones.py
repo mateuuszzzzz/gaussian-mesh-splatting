@@ -59,21 +59,31 @@ class Face2GSParamsDecoder(nn.Module):
         target_network_out_ch = [TARGET_INPUT_SIZE] + config['model']['GS_TN']['layer_out_channels'] + [TARGET_OUTPUT_SIZE(config)]
         target_network_use_bias = int(config['model']['GS_TN']['use_bias'])
 
-        self.model = nn.Sequential(
-            nn.Linear(in_features=self.z_size, out_features=64, bias=self.use_bias),
-            nn.ReLU(inplace=True),
+        # self.model = nn.Sequential(
+        #     nn.Linear(in_features=self.z_size, out_features=64, bias=self.use_bias),
+        #     nn.ReLU(inplace=False),
 
-            nn.Linear(in_features=64, out_features=128, bias=self.use_bias),
-            nn.ReLU(inplace=True),
+        #     nn.Linear(in_features=64, out_features=128, bias=self.use_bias),
+        #     nn.ReLU(inplace=False),
 
-            nn.Linear(in_features=128, out_features=512, bias=self.use_bias),
-            nn.ReLU(inplace=True),
+        #     nn.Linear(in_features=128, out_features=512, bias=self.use_bias),
+        #     nn.ReLU(inplace=False),
 
-            nn.Linear(in_features=512, out_features=1024, bias=self.use_bias),
-            nn.ReLU(inplace=True),
+        #     nn.Linear(in_features=512, out_features=1024, bias=self.use_bias),
+        #     nn.ReLU(inplace=False),
 
-            nn.Linear(in_features=1024, out_features=2048, bias=self.use_bias),
-        )
+        #     nn.Linear(in_features=1024, out_features=2048, bias=self.use_bias),
+        # )
+
+        self.linears = []
+        self.linears.append(nn.Linear(in_features=self.z_size, out_features=64, bias=self.use_bias)) #czemu tak jak z_size to 2048
+        self.linears.append(nn.Linear(in_features=64, out_features=128, bias=self.use_bias))
+        self.linears.append(nn.Linear(in_features=128, out_features=512, bias=self.use_bias))
+        self.linears.append(nn.Linear(in_features=512, out_features=1024, bias=self.use_bias))
+        self.linears.append(nn.Linear(in_features=1024, out_features=2048, bias=self.use_bias))
+        self.activation = nn.ReLU(inplace=True)
+
+        self.linears = nn.ModuleList(self.linears)
 
         self.output = [
             nn.Linear(2048, (target_network_out_ch[x - 1] + target_network_use_bias) * target_network_out_ch[x],
@@ -85,6 +95,9 @@ class Face2GSParamsDecoder(nn.Module):
             self.output = nn.ModuleList(self.output)
 
     def forward(self, x):
-        output = self.model(x)
-        return torch.cat([target_network_layer(output) for target_network_layer in self.output], 1)
-
+        for i, layer in enumerate(self.linears):
+            x = nn.functional.linear(x, layer.weight.clone(),layer.bias)
+            if i != len(self.linears):
+                x = self.activation(x)
+        target_weights = [nn.functional.linear(x, target_network_layer.weight.clone(),target_network_layer.bias) for target_network_layer in self.output]
+        return torch.cat(target_weights, 1)
