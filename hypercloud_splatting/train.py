@@ -40,6 +40,7 @@ def save_training_data(
         vertices,
         faces,
         point_cloud,
+        scaling,
 ):
 
 
@@ -75,7 +76,7 @@ def save_training_data(
     ax3 = fig.add_subplot(1, 3, 3, projection='3d')
 
     ax1.set_title('HyperCloud mesh')
-    ax2.set_title('GS mesh')
+    ax2.set_title(f'GS mesh (c={scaling})')
     ax3.set_title('Initial point cloud')
 
     ax1.plot_trisurf(
@@ -141,7 +142,7 @@ def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, vertices, faces):
 def gatherCamInfos(cam_poses, images):
     cam_infos = []
 
-    CAMERA_ANGLE_X = 1 # TO DO: Update this to valid value
+    CAMERA_ANGLE_X = 0.6911112070083618
 
     for idx, image in enumerate(images):
         frame = cam_poses[idx]
@@ -280,6 +281,7 @@ def hypercloud_training(config, args, pipe):
                     raw_alphas, raw_rgb, raw_c, raw_opacity = torch.split(gs_params, [3, 3, 1, 1], dim=-1)
 
                     pcd, scaling = prepare_pcd(raw_alphas, raw_rgb, raw_c, raw_opacity, transformed_vertices, sphere_faces)
+                    print(scaling.shape)
                     cam_infos, radius = get_cameras_extent_radius(cam_poses[j], images[j])
                     
                     # Build gaussian model from created pcd
@@ -309,6 +311,7 @@ def hypercloud_training(config, args, pipe):
                                     transformed_vertices,
                                     sphere_faces,
                                     point_cloud[j],
+                                    scaling,
                                 )
                         except Exception as e:
                             print(e)
