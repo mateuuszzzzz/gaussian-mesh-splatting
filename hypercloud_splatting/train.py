@@ -281,7 +281,8 @@ def hypercloud_training(config, args, pipe):
                     pcd, scaling = prepare_pcd(raw_alphas, raw_rgb, raw_c, raw_opacity, transformed_vertices, sphere_faces)
                     cam_infos, radius = get_cameras_extent_radius(cam_poses[j], images[j])
                     
-                    # Build gaussian model from created pcd
+                    # Build gaussian model from pcd parameters returned by `Face2GSParamsTargetNetwork`
+                    # We need this to use `GaussianRasterizer`
                     gaussian_model.create_from_pcd(pcd, radius)
 
 
