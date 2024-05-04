@@ -32,7 +32,6 @@ EPS = 1e-8
 
 LAMBDA_DSSIM = 0.2
 
-
 def save_training_data(
         gt_image, 
         image, 
@@ -100,7 +99,6 @@ def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, vertices, faces):
     alpha = alpha / alpha.sum(dim=-1, keepdim=True) # normalized
     alpha = alpha.reshape(alpha.shape[0], 1, 3).cuda()
 
-
     rgb = torch.relu(raw_rgb) + EPS
     rgb = rgb / rgb.sum(dim=-1, keepdim=True).cuda() # normalized
 
@@ -109,12 +107,11 @@ def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, vertices, faces):
 
     opacity = torch.sigmoid(raw_opacity).cuda()
 
-    def transform_vertices_function(vertices, _scaling=c):
-        vertices = vertices[:, [0, 2, 1]]
-        vertices[:, 1] = -vertices[:, 1]
-        vertices *= c
-        return vertices
-    
+    c_mean = c.mean() + 1
+    vertices = vertices[:, [0, 2, 1]]
+    vertices[:, 1] = -vertices[:, 1]
+    vertices *= c_mean
+
     triangles = vertices[faces.clone().detach().long()].float().cuda()
 
     num_pts = triangles.shape[0]
@@ -133,7 +130,7 @@ def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, vertices, faces):
         normals=np.zeros((num_pts, 3)),
         vertices=vertices,
         faces=faces,
-        transform_vertices_function=transform_vertices_function,
+        transform_vertices_function=None,
         triangles=triangles.cuda(),
         opacities=opacity
     ), c.clone().cpu().detach().numpy()
@@ -212,7 +209,7 @@ def hypercloud_training(config, args, pipe):
     dataset_name = config['dataset'].lower()
     assert dataset_name == 'pts2nerf' # Currently only dataset derived from https://github.com/gmum/points2nerf/blob/main/dataset/dataset.py is supported.
 
-    dataset = Pts2Nerf(root_dir=config['data_dir'], classes=config['classes'])
+    dataset = Pts2Nerf(root_dir=config['data_dir'], classes=config['classes'], debug=True, debug_size=5, images_per_cloud=4)
     batch_size = config['batch_size']
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True, pin_memory=True)
 
@@ -226,7 +223,7 @@ def hypercloud_training(config, args, pipe):
 
     gaussian_model = GaussianMeshModel(sh_degree=0)
 
-    optimizer = torch.optim.Adam(face2params_decoder.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(face2params_decoder.parameters(), lr=0.001) # Original is 0.001
 
 
     # TO DO: Implement passing epochs from config
@@ -236,6 +233,7 @@ def hypercloud_training(config, args, pipe):
 
         print(50*"#" + f"Epoch {epoch}" + 50*"#")
         try:
+            loss = None
             for i, (point_cloud, images, cam_poses) in enumerate(tqdm(dataloader)):
                 x = []
                 y = []
@@ -281,7 +279,6 @@ def hypercloud_training(config, args, pipe):
                     raw_alphas, raw_rgb, raw_c, raw_opacity = torch.split(gs_params, [3, 3, 1, 1], dim=-1)
 
                     pcd, scaling = prepare_pcd(raw_alphas, raw_rgb, raw_c, raw_opacity, transformed_vertices, sphere_faces)
-                    print(scaling.shape)
                     cam_infos, radius = get_cameras_extent_radius(cam_poses[j], images[j])
                     
                     # Build gaussian model from created pcd
@@ -303,7 +300,7 @@ def hypercloud_training(config, args, pipe):
                         gt_image = viewpoint_cam.original_image.cuda()
 
                         try:
-                            if idx % 25 == 0:
+                            if idx == 0:
                                 save_training_data(
                                     gt_image,
                                     image,
@@ -331,3 +328,6 @@ def hypercloud_training(config, args, pipe):
                 optimizer.step()
         except Exception as e:
             print(e)
+        
+        if loss is not None:
+            print(f"LOSS {loss.item()}")
