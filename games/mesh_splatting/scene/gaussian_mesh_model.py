@@ -52,14 +52,14 @@ class GaussianMeshModel(GaussianModel):
         self.spatial_lr_scale = spatial_lr_scale
         pcd_alpha_shape = pcd.alpha.shape
 
-        print("Number of faces: ", pcd_alpha_shape[0])
-        print("Number of points at initialisation in face: ", pcd_alpha_shape[1])
+        # print("Number of faces: ", pcd_alpha_shape[0])
+        # print("Number of points at initialisation in face: ", pcd_alpha_shape[1])
 
         alpha_point_cloud = pcd.alpha.float().cuda()
         scale = torch.ones((pcd.points.shape[0], 1)).float().cuda()
 
-        print("Number of points at initialisation : ",
-              alpha_point_cloud.shape[0] * alpha_point_cloud.shape[1])
+        # print("Number of points at initialisation : ",
+        #       alpha_point_cloud.shape[0] * alpha_point_cloud.shape[1])
 
         fused_color = RGB2SH(pcd.colors.cuda()) # CREATE CUSTOM GS MODEL
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
