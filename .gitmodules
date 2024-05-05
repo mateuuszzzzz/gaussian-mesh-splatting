@@ -9,4 +9,5 @@
 	url = https://gitlab.inria.fr/sibr/sibr_core.git
 [submodule "submodules/hypercloud"]
 	path = submodules/hypercloud
-	url = git@github.com:mateuuszzzzz/3d-point-clouds-HyperCloud.git
+	url = https://github.com/mateuuszzzzz/3d-point-clouds-HyperCloud.git
+	branch = submodule_branch
