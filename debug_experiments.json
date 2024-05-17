@@ -1,5 +1,5 @@
 {
-    "results_root": "/home/mateusz/Desktop/debug_results",
+    "results_root": "D:/Datasets/hypercloud_weights",
     "arch": "vae",
     "clean_results_dir": false,
 
@@ -8,7 +8,7 @@
 
     "reconstruction_loss": "chamfer",
     "dataset": "pts2nerf",
-    "data_dir": "/home/mateusz/datasets/nerfdataset",
+    "data_dir": "D:/Datasets/pts2nerf",
 
     "classes": ["cars"],
     "reconstruction_coef": 0.05,
@@ -54,7 +54,8 @@
                 "alphas": 3,
                 "rgb": 3,
                 "c": 1,
-                "opacity": 1
+                "opacity": 1,
+                "scaling": 1
             },
             "mock": {
                 "alphas": true,

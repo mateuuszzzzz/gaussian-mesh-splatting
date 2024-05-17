@@ -56,7 +56,8 @@ class GaussianMeshModel(GaussianModel):
         # print("Number of points at initialisation in face: ", pcd_alpha_shape[1])
 
         alpha_point_cloud = pcd.alpha.float().cuda()
-        scale = torch.ones((pcd.points.shape[0], 1)).float().cuda()
+        #scale = torch.ones((pcd.points.shape[0], 1)).float().cuda()
+        scale = pcd.scale
 
         # print("Number of points at initialisation : ",
         #       alpha_point_cloud.shape[0] * alpha_point_cloud.shape[1])
@@ -219,3 +220,7 @@ class GaussianMeshModel(GaussianModel):
         # point_cloud = params['point_cloud']
         self._alpha = nn.Parameter(alpha)
         self._scale = nn.Parameter(scale)
+
+        #NOTE: jesli chcielibysmy wykorzystac scaler_distance_from_face
+        #i scale (ktory teraz zmienil wymiary i sie wywala)
+        #to musimy to dodac do saveowania i loadowania modelu tak, zeby dzialalo (na razie problemy z wymiarami byly)

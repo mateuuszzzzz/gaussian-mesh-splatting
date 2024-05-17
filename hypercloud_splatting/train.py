@@ -94,7 +94,7 @@ def save_training_data(
     plt.savefig(f'./debug_data/mesh_{seed}.png', dpi=300)
     plt.close(fig)
 
-def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, vertices, faces):
+def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, raw_scale, vertices, faces):
     alpha = torch.relu(raw_alpha) + EPS
     alpha = alpha / alpha.sum(dim=-1, keepdim=True) # normalized
     alpha = alpha.reshape(alpha.shape[0], 1, 3).cuda()
@@ -104,6 +104,9 @@ def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, vertices, faces):
 
     c = torch.relu(raw_c) + EPS
     c = c.cuda()
+
+    scale = torch.relu(raw_scale) + EPS
+    scale = scale.cuda()
 
     opacity = torch.sigmoid(raw_opacity).cuda()
 
@@ -132,7 +135,8 @@ def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, vertices, faces):
         faces=faces,
         transform_vertices_function=None,
         triangles=triangles.cuda(),
-        opacities=opacity
+        opacities=opacity,
+        scale=scale
     ), c.clone().cpu().detach().numpy()
 
 # NOTE: Possibly in future it will need something to handle white/back background. Now it handles only white.
@@ -177,7 +181,7 @@ def hypercloud_training(config, args, pipe):
 
     device = cuda_setup(config['cuda'], config['gpu'])
 
-    weights_path = get_weights_dir(config)
+    weights_path = config['results_root']
     epoch = find_latest_epoch(weights_path)
 
     sphere2model_decoder = Sphere2ModelDecoder(config, device).to(device)
@@ -275,10 +279,11 @@ def hypercloud_training(config, args, pipe):
                     # 1. First group of 3 are alphas
                     # 2. Second group of 3 is RGB
                     # 3. Next value is scaling parameter (it scales mesh size)
-                    # 4. Last value is opacity
-                    raw_alphas, raw_rgb, raw_c, raw_opacity = torch.split(gs_params, [3, 3, 1, 1], dim=-1)
+                    # 4. Next value is opacity
+                    # 5. Last value is scaling for Gaussian
+                    raw_alphas, raw_rgb, raw_c, raw_opacity, raw_scale = torch.split(gs_params, [3, 3, 1, 1, 1], dim=-1)
 
-                    pcd, scaling = prepare_pcd(raw_alphas, raw_rgb, raw_c, raw_opacity, transformed_vertices, sphere_faces)
+                    pcd, scaling = prepare_pcd(raw_alphas, raw_rgb, raw_c, raw_opacity, raw_scale, transformed_vertices, sphere_faces)
                     cam_infos, radius = get_cameras_extent_radius(cam_poses[j], images[j])
                     
                     # Build gaussian model from pcd parameters returned by `Face2GSParamsTargetNetwork`

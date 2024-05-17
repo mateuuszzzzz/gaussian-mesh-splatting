@@ -26,6 +26,7 @@ class DifferentiableMeshPointCloud(NamedTuple):
     faces: np.array
     transform_vertices_function: object
     triangles: torch.Tensor
+    scale: torch.Tensor
 
 class MeshPointCloud(NamedTuple):
     alpha: torch.Tensor
