@@ -2,7 +2,7 @@ from hypercloud.models.aae import HyperNetwork as Sphere2ModelDecoder, Encoder, 
 import torch
 import torch.nn as nn
 
-TARGET_INPUT_SIZE = 3*3
+TARGET_INPUT_SIZE = 108
 TARGET_OUTPUT_SIZE = lambda config: sum([channels for _, channels in config['model']['GS_TN']['gs_params_out_channels'].items()], 0) 
 
 class Face2GSParamsTargetNetwork(nn.Module):
@@ -105,9 +105,10 @@ class Face2GSParamsDecoder(nn.Module):
 
 
 class ImageEmbeddingsEncoder(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, disable_vae = False):
         super().__init__()
 
+        self.disable_vae = disable_vae
         self.z_size = config['z_size']
         self.use_bias = config['model']['E']['use_bias']
         self.relu_slope = config['model']['E']['relu_slope']
@@ -146,6 +147,10 @@ class ImageEmbeddingsEncoder(nn.Module):
         output2 = output.max(dim=2)[0]
         logit = self.fc(output2)
         mu = self.mu_layer(logit)
-        logvar = self.std_layer(logit)
-        z = self.reparameterize(mu, logvar)
-        return z, mu, torch.exp(logvar)
+
+        if not self.disable_vae:
+            logvar = self.std_layer(logit)
+            z = self.reparameterize(mu, logvar)
+            return z, mu, torch.exp(logvar)
+        else:
+            return None, mu, None

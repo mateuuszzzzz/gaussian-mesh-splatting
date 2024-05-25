@@ -15,6 +15,7 @@ from scene.dataset_readers import (
     getNerfppNorm,
     CameraInfo
 )
+from itertools import chain
 from PIL import Image
 from utils.loss_utils import l1_loss, ssim
 from renderer.gaussian_renderer import render
@@ -24,6 +25,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import math
 from .image_encoders import ResNet101, ConvNet
+from utils.hypercloud_utils import create_embeddings_for_faces
 
 ENCODER_WEIGHTS = lambda path, epoch: torch.load(join(path, f'{epoch:05}_E.pth'))
 SPHERE2MODEL_DECODER_WEIGHTS = lambda path, epoch: torch.load(join(path, f'{epoch:05}_G.pth'))
@@ -34,6 +36,7 @@ MESH_DEPTH = lambda config: config['experiments']['sphere_triangles']['depth']
 EPS = 1e-8
 
 LAMBDA_DSSIM = 0.2
+DISABLE_VAE = True
 
 def reshape_cam_poses_to_image_shape(cam_poses, width, height, batch_size):
     embedder_fn, _ = get_embedder(4,0)
@@ -161,10 +164,8 @@ def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, vertices, faces):
 
     opacity = torch.sigmoid(raw_opacity).cuda()
 
-    c_mean = c.mean() + 1
     vertices = vertices[:, [0, 2, 1]]
     vertices[:, 1] = -vertices[:, 1]
-    vertices *= c_mean
 
     triangles = vertices[faces.clone().detach().long()].float().cuda()
 
@@ -186,7 +187,8 @@ def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, vertices, faces):
         faces=faces,
         transform_vertices_function=None,
         triangles=triangles.cuda(),
-        opacities=opacity
+        opacities=opacity,
+        c=c
     ), c.clone().cpu().detach().numpy()
 
 # NOTE: Possibly in future it will need something to handle white/back background. Now it handles only white.
@@ -239,7 +241,7 @@ def hypercloud_training(config, args, pipe):
 
     # image_encoder = ResNet101().to(device)
     image_encoder = ConvNet().to(device) # SMALLER MODEL
-    embedded_image_encoder = ImageEmbeddingsEncoder(config).to(device)
+    embedded_image_encoder = ImageEmbeddingsEncoder(config, disable_vae= True).to(device)
 
     # LOAD PRETRAINED MODELS AND MAKE THEM NON-TRAINABLE
     sphere2model_decoder.load_state_dict(
@@ -281,18 +283,16 @@ def hypercloud_training(config, args, pipe):
 
     gaussian_model = GaussianMeshModel(sh_degree=0)
 
-    decoder_optimizer = torch.optim.Adam(face2params_decoder.parameters(), lr=0.001) # Original is 0.001
-    embedded_image_decoder_optimizer = torch.optim.Adam(embedded_image_encoder.parameters(), lr=0.001)
-    encoder_optimizer = torch.optim.Adam(image_encoder.parameters(), lr=0.001)
+    # decoder_optimizer = torch.optim.Adam(face2params_decoder.parameters(), lr=0.0001) # Original is 0.001
+    encoder_optimizer = torch.optim.Adam(image_encoder.parameters(), lr=0.0003)
+    embedded_image_decoder_optimizer = torch.optim.Adam(chain(embedded_image_encoder.parameters(),face2params_decoder.parameters()), lr=0.0018)
 
 
     # TO DO: Implement passing epochs from config
     for epoch in range(1000):
-        face2params_decoder.train()
+            face2params_decoder.train()
 
-
-        print(50*"#" + f"Epoch {epoch}" + 50*"#")
-        try:
+            print(50*"#" + f"Epoch {epoch}" + 50*"#")
             loss = None
             for i, (point_cloud, images, cam_poses) in enumerate(tqdm(dataloader)):
                 x = []
@@ -319,7 +319,8 @@ def hypercloud_training(config, args, pipe):
                 encoded_images_data = encoded_images_data.reshape(batch_size, 1, -1)
 
                 gs_params_codes, gs_mu, gs_logvar = embedded_image_encoder(encoded_images_data)
-
+                if DISABLE_VAE:
+                    gs_params_codes = gs_mu
 
                 # Move to the device
                 point_cloud = point_cloud.to(device).float()
@@ -342,7 +343,7 @@ def hypercloud_training(config, args, pipe):
                     sphere2model_target_network = Sphere2ModelTargetNetwork(config, sphere2model_weights[j].to(device)).to(device)
 
                     # Transform mesh of the sphere
-                    transformed_vertices = sphere2model_target_network(sphere_vertices)
+                    transformed_vertices = 2.2 * sphere2model_target_network(sphere_vertices)
 
                     # Init gaussian params target network
                     face2params_target_network = Face2GSParamsTargetNetwork(config, face2params_weights[j].to(device)).to(device)
@@ -352,7 +353,8 @@ def hypercloud_training(config, args, pipe):
                     transformed_faces = transformed_vertices[sphere_faces]
                     transformed_faces = transformed_faces.reshape(transformed_faces.shape[0], -1).to(device)
 
-                    gs_params = face2params_target_network(transformed_faces)
+                    faces_embeddings = create_embeddings_for_faces(transformed_faces, sphere_faces, get_embedder)
+                    gs_params = face2params_target_network(faces_embeddings)
 
                     # We have 7 params in total
                     # 1. First group of 3 are alphas
@@ -388,7 +390,7 @@ def hypercloud_training(config, args, pipe):
                                 save_training_data(
                                     gt_image,
                                     image,
-                                    f'(debug)_epoch_{epoch}',
+                                    f'(debug)',
                                     transformed_vertices,
                                     sphere_faces,
                                     point_cloud[j],
@@ -400,23 +402,30 @@ def hypercloud_training(config, args, pipe):
                         x.append(gt_image)
                         y.append(image)
                 
-                decoder_optimizer.zero_grad()
+                # decoder_optimizer.zero_grad()
                 encoder_optimizer.zero_grad()
                 embedded_image_decoder_optimizer.zero_grad()
+                face2params_decoder.zero_grad()
+                embedded_image_encoder.zero_grad()
+                image_encoder.zero_grad()
+
                 x = torch.stack(x)
                 y = torch.stack(y)
 
-                loss_kld = (0.5 * (torch.exp(gs_logvar) + torch.pow(gs_mu, 2) - 1 - gs_logvar).sum())*0.1
+                if not DISABLE_VAE:
+                    loss_kld = (0.5 * (torch.exp(gs_logvar) + torch.pow(gs_mu, 2) - 1 - gs_logvar).sum())*0.1
 
                 Ll1 = l1_loss(y, x)
-                loss = (1.0 - LAMBDA_DSSIM) * Ll1 + LAMBDA_DSSIM * (1.0 - ssim(y, x)) + loss_kld
+
+                if not DISABLE_VAE:
+                    loss = (1.0 - LAMBDA_DSSIM) * Ll1 + LAMBDA_DSSIM * (1.0 - ssim(y, x)) + loss_kld
+                else:
+                    loss = (1.0 - LAMBDA_DSSIM) * Ll1 + LAMBDA_DSSIM * (1.0 - ssim(y, x))
 
                 loss.backward()
-                decoder_optimizer.step()
+                # decoder_optimizer.step()
                 encoder_optimizer.step()
                 embedded_image_decoder_optimizer.step()
-        except Exception as e:
-            print(e)
         
-        if loss is not None:
-            print(f"LOSS {loss.item()}")
+            if loss is not None:
+                print(f"LOSS {loss.item()}")
