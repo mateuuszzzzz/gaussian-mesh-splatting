@@ -76,7 +76,8 @@ class GaussianMeshModel(GaussianModel):
         self.update_alpha()
         self._features_dc = features[:, :, 0:1].transpose(1, 2)
         self._features_rest = features[:, :, 1:].transpose(1, 2)
-        self._scale = scale
+        self._scale = pcd.c
+        # self._scale = scale
         self.prepare_scaling_rot()
         self._opacity = opacities
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")

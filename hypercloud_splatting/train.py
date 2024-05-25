@@ -1,4 +1,5 @@
-from .backbones import Encoder, Sphere2ModelDecoder, Sphere2ModelTargetNetwork, Face2GSParamsDecoder, Face2GSParamsTargetNetwork
+from .backbones import Encoder, Sphere2ModelDecoder, Sphere2ModelTargetNetwork,\
+      Face2GSColorDecoder, Face2GSShapeDecoder, Face2GSColorTargetNetwork, Face2GSShapeTargetNetwork
 from hypercloud.utils.util import get_weights_dir, find_latest_epoch, cuda_setup
 from hypercloud.utils.sphere_triangles import generate_sphere_mesh
 from hypercloud.datasets import Pts2Nerf
@@ -21,6 +22,8 @@ from utils.camera_utils import cameraList_from_camInfos
 import random
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from utils.hypercloud_utils import create_embeddings_for_faces
+from .backbones import Face2GSDecoder, Face2GSTargetNetwork
 
 ENCODER_WEIGHTS = lambda path, epoch: torch.load(join(path, f'{epoch:05}_E.pth'))
 SPHERE2MODEL_DECODER_WEIGHTS = lambda path, epoch: torch.load(join(path, f'{epoch:05}_G.pth'))
@@ -30,7 +33,26 @@ MESH_DEPTH = lambda config: config['experiments']['sphere_triangles']['depth']
 
 EPS = 1e-8
 
-LAMBDA_DSSIM = 0.2
+USE_SEPARATE_SHAPE_AND_COLOR = False
+IS_SHAPE_FREEZED = False
+
+LAMBDA_DSSIM = 0.2 # If constant equals 0 then it is MSE
+
+def weights_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        gain = torch.nn.init.calculate_gain('relu')
+        torch.nn.init.xavier_uniform_(m.weight, gain)
+        if m.bias is not None:
+            torch.nn.init.constant_(m.bias, 0)
+    elif classname.find('BatchNorm') != -1:
+        torch.nn.init.constant_(m.weight, 1)
+        torch.nn.init.constant_(m.bias, 0)
+    elif classname.find('Linear') != -1:
+        gain = torch.nn.init.calculate_gain('relu')
+        torch.nn.init.xavier_uniform_(m.weight, gain)
+        if m.bias is not None:
+            torch.nn.init.constant_(m.bias, 0)
 
 def save_training_data(
         gt_image, 
@@ -107,10 +129,8 @@ def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, vertices, faces):
 
     opacity = torch.sigmoid(raw_opacity).cuda()
 
-    c_mean = c.mean() + 1
     vertices = vertices[:, [0, 2, 1]]
     vertices[:, 1] = -vertices[:, 1]
-    vertices *= c_mean
 
     triangles = vertices[faces.clone().detach().long()].float().cuda()
 
@@ -132,8 +152,9 @@ def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, vertices, faces):
         faces=faces,
         transform_vertices_function=None,
         triangles=triangles.cuda(),
-        opacities=opacity
-    ), c.clone().cpu().detach().numpy()
+        opacities=opacity,
+        c=c,
+    ), c
 
 # NOTE: Possibly in future it will need something to handle white/back background. Now it handles only white.
 def gatherCamInfos(cam_poses, images):
@@ -202,14 +223,27 @@ def hypercloud_training(config, args, pipe):
     encoder.eval()
 
     # LOAD GS MESH PARAMS DECODER
-    face2params_decoder = Face2GSParamsDecoder(config, device).to(device)
-    face2params_decoder.train()
+    if USE_SEPARATE_SHAPE_AND_COLOR:
+        face2Colors_decoder = Face2GSColorDecoder(config, device).to(device)
+        face2Shape_decoder = Face2GSShapeDecoder(config, device).to(device)
+    else:
+        face2GS_decoder = Face2GSDecoder(config, device).to(device)
+
+    if USE_SEPARATE_SHAPE_AND_COLOR:
+        face2Colors_decoder.apply(weights_init)
+        face2Shape_decoder.apply(weights_init)
+
+        face2Colors_decoder.train()
+        face2Shape_decoder.train()
+    else:
+        face2GS_decoder.apply(weights_init)
+        face2GS_decoder.train()
 
     # LOAD DATASET
     dataset_name = config['dataset'].lower()
     assert dataset_name == 'pts2nerf' # Currently only dataset derived from https://github.com/gmum/points2nerf/blob/main/dataset/dataset.py is supported.
 
-    dataset = Pts2Nerf(root_dir=config['data_dir'], classes=config['classes'], debug=True, debug_size=5, images_per_cloud=4)
+    dataset = Pts2Nerf(root_dir=config['data_dir'], classes=config['classes'], debug=True, debug_size=1, images_per_cloud=1)
     batch_size = config['batch_size']
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True, pin_memory=True)
 
@@ -223,18 +257,28 @@ def hypercloud_training(config, args, pipe):
 
     gaussian_model = GaussianMeshModel(sh_degree=0)
 
-    optimizer = torch.optim.Adam(face2params_decoder.parameters(), lr=0.001) # Original is 0.001
-
+    if USE_SEPARATE_SHAPE_AND_COLOR:
+        optimizer_colors = torch.optim.Adam(face2Colors_decoder.parameters(), lr=0.0003) # Original is 0.001
+        optimizer_shape = torch.optim.Adam(face2Shape_decoder.parameters(), lr=0.0005)
+        face2Shape_decoder.train()
+        face2Colors_decoder.train()
+    else:
+        optimizer_gs = torch.optim.Adam(face2GS_decoder.parameters(), lr=0.0002)
+        face2GS_decoder.train()
 
     # TO DO: Implement passing epochs from config
-    for epoch in range(1000):
-        face2params_decoder.train()
-
+    for epoch in range(10000):
 
         print(50*"#" + f"Epoch {epoch}" + 50*"#")
-        try:
-            loss = None
-            for i, (point_cloud, images, cam_poses) in enumerate(tqdm(dataloader)):
+        loss = None
+
+        # if epoch > 20 and epoch < 300:
+        #     IS_SHAPE_FREEZED = True
+        #     face2Shape_decoder.eval()
+        # else:
+        #     IS_SHAPE_FREEZED = False
+        
+        for i, (point_cloud, images, cam_poses) in enumerate(tqdm(dataloader)):
                 x = []
                 y = []
 
@@ -252,39 +296,54 @@ def hypercloud_training(config, args, pipe):
                 sphere2model_weights = sphere2model_decoder(codes) # NON-TRAINABLE
 
                 # Compute weights for target network that generates gaussian mesh splatting params
-                face2params_weights = face2params_decoder(codes)
+                if USE_SEPARATE_SHAPE_AND_COLOR:
+                    face2colors_weights = face2Colors_decoder(codes)
+                    face2shape_weights = face2Shape_decoder(codes)
+                else:
+                    face2gs_weights = face2GS_decoder(codes)
 
                 for j in range(batch_size):
                     # Init mesh target network with returned weights
                     sphere2model_target_network = Sphere2ModelTargetNetwork(config, sphere2model_weights[j].to(device)).to(device)
 
                     # Transform mesh of the sphere
-                    transformed_vertices = sphere2model_target_network(sphere_vertices)
-
-                    # Init gaussian params target network
-                    face2params_target_network = Face2GSParamsTargetNetwork(config, face2params_weights[j].to(device)).to(device)
-
+                    transformed_vertices = 2.2 * sphere2model_target_network(sphere_vertices)
 
                     # For each face we need to compute GS params vector. [N_FACES, 9] -> [N_FACES, N_PARAMS]
                     transformed_faces = transformed_vertices[sphere_faces]
                     transformed_faces = transformed_faces.reshape(transformed_faces.shape[0], -1).to(device)
+                    faces_embeddings = create_embeddings_for_faces(transformed_faces, sphere_faces)
 
-                    gs_params = face2params_target_network(transformed_faces)
+                    # Init gaussian params target network
+                    if USE_SEPARATE_SHAPE_AND_COLOR:
+                        face2colors_target_network = Face2GSColorTargetNetwork(config, face2colors_weights[j].to(device)).to(device)
+                        face2shape_target_network = Face2GSShapeTargetNetwork(config, face2shape_weights[j].to(device)).to(device)
+                    else:
+                        face2gs_target_network = Face2GSTargetNetwork(config, face2gs_weights[j].to(device)).to(device)
+
+                    if USE_SEPARATE_SHAPE_AND_COLOR:
+                        gs_colors = face2colors_target_network(faces_embeddings)
+                        gs_shapes = face2shape_target_network(faces_embeddings)
+                    else:
+                        gs_params = face2gs_target_network(faces_embeddings)
 
                     # We have 7 params in total
                     # 1. First group of 3 are alphas
                     # 2. Second group of 3 is RGB
-                    # 3. Next value is scaling parameter (it scales mesh size)
+                    # 3. Next value is scaling parameter (it scales every single gauss separately)
                     # 4. Last value is opacity
-                    raw_alphas, raw_rgb, raw_c, raw_opacity = torch.split(gs_params, [3, 3, 1, 1], dim=-1)
+                    if USE_SEPARATE_SHAPE_AND_COLOR:
+                        raw_rgb, raw_opacity = torch.split(gs_colors, [3, 1], dim=-1)
+                        raw_alphas, raw_scaling = torch.split(gs_shapes, [3, 1], dim=-1)
+                    else:
+                        raw_rgb, raw_opacity, raw_alphas, raw_scaling = torch.split(gs_params, [3,1,3,1], dim=-1)
 
-                    pcd, scaling = prepare_pcd(raw_alphas, raw_rgb, raw_c, raw_opacity, transformed_vertices, sphere_faces)
+                    pcd, scaling = prepare_pcd(raw_alphas, raw_rgb, raw_scaling, raw_opacity, transformed_vertices, sphere_faces)
                     cam_infos, radius = get_cameras_extent_radius(cam_poses[j], images[j])
                     
                     # Build gaussian model from pcd parameters returned by `Face2GSParamsTargetNetwork`
                     # We need this to use `GaussianRasterizer`
                     gaussian_model.create_from_pcd(pcd, radius)
-
 
                     # PREPARE CAM_INFOS
                     cam_infos, radius = get_cameras_extent_radius(cam_poses[j], images[j])
@@ -318,7 +377,15 @@ def hypercloud_training(config, args, pipe):
                         y.append(image)
                 
                 # HERE WE SHOULD DO BACKWARD PASS
-                optimizer.zero_grad()
+                if USE_SEPARATE_SHAPE_AND_COLOR:
+                    optimizer_colors.zero_grad()
+                    optimizer_shape.zero_grad()
+                    face2Shape_decoder.zero_grad()
+                    face2Colors_decoder.zero_grad()
+                else:
+                    optimizer_gs.zero_grad()
+                    face2GS_decoder.zero_grad()
+
                 x = torch.stack(x)
                 y = torch.stack(y)
 
@@ -326,9 +393,11 @@ def hypercloud_training(config, args, pipe):
                 loss = (1.0 - LAMBDA_DSSIM) * Ll1 + LAMBDA_DSSIM * (1.0 - ssim(y, x))
 
                 loss.backward()
-                optimizer.step()
-        except Exception as e:
-            print(e)
+                if USE_SEPARATE_SHAPE_AND_COLOR:
+                    optimizer_shape.step()
+                    optimizer_colors.step()
+                else:
+                    optimizer_gs.step()
         
         if loss is not None:
             print(f"LOSS {loss.item()}")

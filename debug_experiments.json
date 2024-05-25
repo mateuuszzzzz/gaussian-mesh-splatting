@@ -45,22 +45,24 @@
             "use_bias": true,
             "relu_slope": 0.2
         },
-        "GS_TN": {
+        "GS_TN_SHAPE": {
             "use_bias": true,
-            "relu_slope": 0.5,
+            "relu_slope": 0.3,
             "freeze_layers_learning": false,
             "layer_out_channels": [32, 64, 128, 64],
             "gs_params_out_channels": {
                 "alphas": 3,
+                "gauss_scaling": 1
+            }
+        },
+        "GS_TN_COLOR": {
+            "use_bias": true,
+            "relu_slope": 0.2,
+            "freeze_layers_learning": false,
+            "layer_out_channels": [32, 64, 128, 64],
+            "gs_params_out_channels": {
                 "rgb": 3,
-                "c": 1,
                 "opacity": 1
-            },
-            "mock": {
-                "alphas": true,
-                "rgb": false,
-                "c": true,
-                "opacity": false
             }
         }
     },
