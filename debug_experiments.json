@@ -55,7 +55,8 @@
                 "rgb": 3,
                 "c": 1,
                 "opacity": 1,
-                "scaling": 1
+                "scaling": 1,
+                "scaler_from_face": 1
             },
             "mock": {
                 "alphas": true,

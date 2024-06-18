@@ -30,6 +30,7 @@ class GaussianMeshModel(GaussianModel):
         self.point_cloud = None
         self._alpha = torch.empty(0)
         self._scale = torch.empty(0)
+        self._scale_from_face = torch.empty(0)
         self.alpha = torch.empty(0)
         self.softmax = torch.nn.Softmax(dim=2)
 
@@ -58,6 +59,7 @@ class GaussianMeshModel(GaussianModel):
         alpha_point_cloud = pcd.alpha.float().cuda()
         #scale = torch.ones((pcd.points.shape[0], 1)).float().cuda()
         scale = pcd.scale
+        scaler_from_face = pcd.scaler_from_face
 
         # print("Number of points at initialisation : ",
         #       alpha_point_cloud.shape[0] * alpha_point_cloud.shape[1])
@@ -74,10 +76,12 @@ class GaussianMeshModel(GaussianModel):
         self.faces = self.point_cloud.faces.cuda()
 
         self._alpha = alpha_point_cloud
+        self._scale_from_face = scaler_from_face
         self.update_alpha()
         self._features_dc = features[:, :, 0:1].transpose(1, 2)
         self._features_rest = features[:, :, 1:].transpose(1, 2)
         self._scale = scale
+        
         self.prepare_scaling_rot()
         self._opacity = opacities
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
@@ -91,10 +95,21 @@ class GaussianMeshModel(GaussianModel):
         the triangles forming the mesh.
 
         """
+        triangles = self.triangles
+        normals = torch.linalg.cross(
+            triangles[:, 1] - triangles[:, 0],
+            triangles[:, 2] - triangles[:, 0],
+            dim=1
+        )
+        eps=1e-8
+        v0 = normals / (torch.linalg.vector_norm(normals, dim=-1, keepdim=True) + eps)
+
         _xyz = torch.matmul(
             self.alpha,
             self.triangles
         )
+        self._scale_from_face = self._scale_from_face.reshape((*self._scale_from_face.shape, 1))
+        _xyz += 1/10*torch.tanh(self._scale_from_face)*torch.stack(tuple([v0 for i in range(self.point_cloud.alpha.shape[1])]),dim=1)
         self._xyz = _xyz.reshape(
                 _xyz.shape[0] * _xyz.shape[1], 3
             )

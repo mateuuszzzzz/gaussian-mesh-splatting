@@ -94,7 +94,7 @@ def save_training_data(
     plt.savefig(f'./debug_data/mesh_{seed}.png', dpi=300)
     plt.close(fig)
 
-def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, raw_scale, vertices, faces):
+def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, raw_scale, raw_scaler_from_face, vertices, faces):
     alpha = torch.relu(raw_alpha) + EPS
     alpha = alpha / alpha.sum(dim=-1, keepdim=True) # normalized
     alpha = alpha.reshape(alpha.shape[0], 1, 3).cuda()
@@ -107,6 +107,9 @@ def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, raw_scale, vertices, fac
 
     scale = torch.relu(raw_scale) + EPS
     scale = scale.cuda()
+
+    scaler_from_face = torch.relu(raw_scaler_from_face) + EPS
+    scaler_from_face = scaler_from_face.cuda()
 
     opacity = torch.sigmoid(raw_opacity).cuda()
 
@@ -136,7 +139,8 @@ def prepare_pcd(raw_alpha, raw_rgb, raw_c, raw_opacity, raw_scale, vertices, fac
         transform_vertices_function=None,
         triangles=triangles.cuda(),
         opacities=opacity,
-        scale=scale
+        scale=scale,
+        scaler_from_face=scaler_from_face
     ), c.clone().cpu().detach().numpy()
 
 # NOTE: Possibly in future it will need something to handle white/back background. Now it handles only white.
@@ -281,9 +285,10 @@ def hypercloud_training(config, args, pipe):
                     # 3. Next value is scaling parameter (it scales mesh size)
                     # 4. Next value is opacity
                     # 5. Last value is scaling for Gaussian
-                    raw_alphas, raw_rgb, raw_c, raw_opacity, raw_scale = torch.split(gs_params, [3, 3, 1, 1, 1], dim=-1)
+                    # 6. scaler from face
+                    raw_alphas, raw_rgb, raw_c, raw_opacity, raw_scale, raw_scaler_from_face = torch.split(gs_params, [3, 3, 1, 1, 1, 1], dim=-1)
 
-                    pcd, scaling = prepare_pcd(raw_alphas, raw_rgb, raw_c, raw_opacity, raw_scale, transformed_vertices, sphere_faces)
+                    pcd, scaling = prepare_pcd(raw_alphas, raw_rgb, raw_c, raw_opacity, raw_scale, raw_scaler_from_face, transformed_vertices, sphere_faces)
                     cam_infos, radius = get_cameras_extent_radius(cam_poses[j], images[j])
                     
                     # Build gaussian model from pcd parameters returned by `Face2GSParamsTargetNetwork`
